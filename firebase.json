@@ -1,0 +1,12 @@
+{
+  "hosting": {
+    "site": "my-daily-planner-8e47e",
+    "public": ".",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**",
+      "**/*.log"
+    ]
+  }
+}

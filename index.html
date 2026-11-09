@@ -1,0 +1,151 @@
+<!Doctype html>
+<html lang="uz">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0a1022">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon-192.png" type="image/png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Kunlik reja">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Kunlik reja</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=7">
+</head>
+<body>
+  <header class="nav">
+    <div class="wrap navin">
+      <div class="brand"><span class="logo" data-i="check"></span><span class="bt">Kunlik reja</span></div>
+      <nav class="tabs">
+        <button class="tab" data-view="today" aria-label="Bugun"><span data-i="check"></span><span class="tl">Bugun</span></button>
+        <button class="tab" data-view="cal" aria-label="Kalendar"><span data-i="cal"></span><span class="tl">Kalendar</span></button>
+        <button class="tab" data-view="stats" aria-label="Statistika"><span data-i="trend"></span><span class="tl">Statistika</span></button>
+      </nav>
+      <button id="logout" class="ghost" hidden aria-label="Chiqish" title="Chiqish" data-i="out"></button>
+      <button id="bell" class="ghost off" hidden aria-label="Eslatmalar" data-i="bell"></button>
+      <button id="theme" class="ghost" aria-label="Qorong'i yoki yorug' rejim"></button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section id="vLogin" class="login" hidden>
+      <h1 class="grad">Kunlik reja</h1>
+      <p class="muted">Google hisobingiz bilan kiring. Rejalaringiz bulutda saqlanadi va telefon bilan kompyuterda bir xil ko'rinadi.</p>
+      <button id="loginBtn" class="gbtn"><span class="g">G</span>Google bilan kirish</button>
+      <p id="loginErr" class="err" hidden></p>
+    </section>
+
+    <section id="vToday">
+      <div class="head">
+        <div>
+          <h1 id="tTitle" class="grad"></h1>
+          <p id="tDate" class="muted"></p>
+        </div>
+        <button id="addBtn" class="primary"><span data-i="plus"></span>Vazifa qo'shish</button>
+      </div>
+      <div id="stats" class="stats"></div>
+      <h2 id="listTitle">Sizning vazifalaringiz</h2>
+      <input id="q" class="search" type="search" placeholder="Vazifalarni qidirish..." aria-label="Vazifalarni qidirish" autocomplete="off">
+      <div id="list" class="tasks"></div>
+    </section>
+
+    <section id="vCal" hidden>
+      <div class="head">
+        <div>
+          <h1 class="grad">Haftalik ko'rinish</h1>
+          <p id="range" class="muted"></p>
+        </div>
+        <div class="ctrls">
+          <button id="goToday" class="btn"><span data-i="cal"></span>Bugun</button>
+          <button id="cprev" class="btn sq" aria-label="Oldingi hafta" data-i="left"></button>
+          <button id="cnext" class="btn sq" aria-label="Keyingi hafta" data-i="right"></button>
+        </div>
+      </div>
+      <div class="weekscroll"><div id="week" class="week"></div></div>
+    </section>
+
+    <section id="vStats" hidden>
+      <div class="head">
+        <div>
+          <h1 class="grad">Haftalik statistika</h1>
+          <p id="sRange" class="muted"></p>
+        </div>
+        <div class="ctrls">
+          <button id="sToday" class="btn"><span data-i="cal"></span>Bu hafta</button>
+          <button id="sprev" class="btn sq" aria-label="Oldingi hafta" data-i="left"></button>
+          <button id="snext" class="btn sq" aria-label="Keyingi hafta" data-i="right"></button>
+        </div>
+      </div>
+      <div id="sCards" class="stats"></div>
+      <h2>Kunlar bo'yicha</h2>
+      <div id="sChart" class="chart"></div>
+      <h2>Kategoriya bo'yicha</h2>
+      <div id="sCat" class="bars"></div>
+      <h2>Muhimlik bo'yicha</h2>
+      <div id="sPrio" class="bars"></div>
+    </section>
+  </main>
+
+  <dialog id="dlg">
+    <form id="form" autocomplete="off">
+      <h3 id="dlgTitle">Yangi vazifa</h3>
+      <label>Nomi
+        <input id="fTitle" type="text" maxlength="100" required placeholder="Masalan: Loyiha rejasini tuzish">
+      </label>
+      <div class="grid2">
+        <label>Sana <input id="fDate" type="date" required></label>
+        <label>Muhimligi
+          <select id="fPrio">
+            <option value="high">Yuqori</option>
+            <option value="medium" selected>O'rta</option>
+            <option value="low">Past</option>
+          </select>
+        </label>
+        <label>Boshlanishi <input id="fStart" type="time" required></label>
+        <label>Tugashi <input id="fEnd" type="time" required></label>
+        <label>Kategoriya
+          <select id="fCat">
+            <option value="work">Ish</option>
+            <option value="health">Sog'liq</option>
+            <option value="personal">Shaxsiy</option>
+          </select>
+        </label>
+        <label>Energiya
+          <select id="fEnergy">
+            <option value="high">Yuqori</option>
+            <option value="medium" selected>O'rta</option>
+            <option value="low">Past</option>
+          </select>
+        </label>
+        <label>Takrorlash
+          <select id="fRepeat">
+            <option value="none" selected>Takrorlanmaydi</option>
+            <option value="daily">Har kuni</option>
+            <option value="weekdays">Ish kunlari (Du-Ju)</option>
+            <option value="weekly">Har hafta</option>
+          </select>
+        </label>
+        <label id="lUntil" hidden>Tugash sanasi (ixtiyoriy) <input id="fUntil" type="date"></label>
+      </div>
+      <p id="fErr" class="err" hidden></p>
+      <div class="actions">
+        <button type="button" id="fCancel" class="btn">Bekor qilish</button>
+        <button type="submit" class="primary">Saqlash</button>
+        
+      </div>
+    </form>
+  </dialog>
+  <div id="toast" class="toast" hidden></div>
+  <script type="module" src="script.js?v=9"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
+    }
+  </script>
+</body>
+</html>

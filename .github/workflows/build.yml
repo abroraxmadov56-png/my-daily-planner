@@ -17,11 +17,11 @@ jobs:
         with:
           node-version: 22
 
-      - name: Java JDK 17 o'rnatish
+      - name: Java JDK 21 o'rnatish
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: Paketslarni o'rnatish va yig'ish
         run: |

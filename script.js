@@ -1,13 +1,16 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js";
+import { initializeApp } from "firebase/app";
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, signOut, onAuthStateChanged } from "firebase/auth";
 import {
   getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
   collection, doc, setDoc, deleteDoc, onSnapshot, writeBatch,
-} from "https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js";
+} from "firebase/firestore";
+import { Capacitor } from "@capacitor/core";
+import { LocalNotifications } from "@capacitor/local-notifications";
+import { AdMob, BannerAdSize, BannerAdPosition } from "@capacitor-community/admob";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAoafvTh_6PASv8SIerfroeSrkuZ4gt7ek",
-  authDomain: "my-daily-planner-8e47e.firebaseapp.com",
+  authDomain: "://firebaseapp.com",
   projectId: "my-daily-planner-8e47e",
   storageBucket: "my-daily-planner-8e47e.firebasestorage.app",
   messagingSenderId: "268827974787",
@@ -81,10 +84,52 @@ let weekRef = midnight(new Date());
 let statRef = midnight(new Date());
 let editId = null;
 
+// Android uchun ovozli bildirishnoma belgilash
+async function scheduleAndroidNotification(t) {
+  if (!Capacitor.isNativePlatform() || t.done) return;
+  try {
+    const perm = await LocalNotifications.requestPermissions();
+    if (perm.display !== 'granted') return;
+
+    const [y, m, d] = t.date.split('-').map(Number);
+    const [hh, mm] = t.start.split(':').map(Number);
+    
+    const notifyDate = new Date(y, m - 1, d, hh, mm - 10, 0);
+    const exactDate = new Date(y, m - 1, d, hh, mm, 0);
+    const baseId = Math.abs(t.id.split('').reduce((a, b) => ((a << 5) - a) + b.charCodeAt(0), 0)) % 100000;
+
+    const notifs = [];
+    if (notifyDate > new Date()) {
+      notifs.push({
+        title: "10 daqiqadan keyin vazifa!",
+        body: `${t.title} (${t.start} - ${t.end})`,
+        id: baseId,
+        schedule: { at: notifyDate },
+        sound: 'default'
+      });
+    }
+    if (exactDate > new Date()) {
+      notifs.push({
+        title: "Vazifa vaqti keldi!",
+        body: `${t.title} (${t.start} - ${t.end})`,
+        id: baseId + 1,
+        schedule: { at: exactDate },
+        sound: 'default'
+      });
+    }
+    if (notifs.length) {
+      await LocalNotifications.schedule({ notifications: notifs });
+    }
+  } catch (err) {
+    console.error("Notification xatosi:", err);
+  }
+}
+
 const taskRef = (id) => doc(db, "users", user.uid, "tasks", id);
 function saveTask(t) {
   const { id, ...data } = t;
   setDoc(taskRef(id), data).catch((e) => toast("Saqlab bo'lmadi: " + (e.code || e.message)));
+  scheduleAndroidNotification(t);
 }
 function removeTask(id) {
   deleteDoc(taskRef(id)).catch((e) => toast("O'chirib bo'lmadi: " + (e.code || e.message)));
@@ -131,10 +176,19 @@ onAuthStateChanged(auth, (u) => {
   render();
 });
 
+getRedirectResult(auth).catch((e) => {
+  $("loginErr").textContent = "Kirishda xatolik: " + e.message;
+  $("loginErr").hidden = false;
+});
+
 $("loginBtn").onclick = async () => {
   $("loginErr").hidden = true;
   try {
-    await signInWithPopup(auth, new GoogleAuthProvider());
+    if (Capacitor.isNativePlatform()) {
+      await signInWithRedirect(auth, new GoogleAuthProvider());
+    } else {
+      await signInWithPopup(auth, new GoogleAuthProvider());
+    }
   } catch (e) {
     if (e.code === "auth/popup-closed-by-user" || e.code === "auth/cancelled-popup-request") return;
     const msgs = {
@@ -187,9 +241,9 @@ function tag(text, color, cls) {
 }
 function tagsFor(t, withPrio) {
   const w = el("div", "tags");
-  if (withPrio) w.append(tag(PRIO[t.prio][0], PRIO[t.prio][1]));
-  w.append(tag(CAT[t.cat][0], CAT[t.cat][1]));
-  if (withPrio) w.append(tag(ENERGY[t.energy][0], ENERGY[t.energy][1]));
+  if (withPrio && PRIO[t.prio]) w.append(tag(PRIO[t.prio][0], PRIO[t.prio][1]));
+  if (CAT[t.cat]) w.append(tag(CAT[t.cat][0], CAT[t.cat][1]));
+  if (withPrio && ENERGY[t.energy]) w.append(tag(ENERGY[t.energy][0], ENERGY[t.energy][1]));
   if (isRep(t) && REPEAT[t.repeat]) w.append(tag("↻ " + REPEAT[t.repeat], "var(--cyan)"));
   return w;
 }
@@ -199,361 +253,4 @@ function timeTag(t) {
   return s;
 }
 
-function searchTasks(q) {
-  const todayD = midnight(new Date());
-  const out = [];
-  tasks.forEach((t) => {
-    if (!(t.title || "").toLowerCase().includes(q)) return;
-    if (!isRep(t)) { out.push(t); return; }
-    // takrorlanuvchi vazifa: bugundan keyingi eng yaqin kuni (topilmasa, boshlangan kuni)
-    let d = parse(t.date) > todayD ? parse(t.date) : todayD;
-    let found = null;
-    for (let i = 0; i < 400; i++) {
-      if (occursOn(t, d)) { found = d; break; }
-      d = addDays(d, 1);
-    }
-    const k = found ? keyOf(found) : t.date;
-    out.push({ ...t, done: (t.doneDates || []).includes(k), occ: k, src: t });
-  });
-  return out.sort((a, b) => {
-    const ka = a.occ || a.date, kb = b.occ || b.date;
-    return ka === kb ? a.start.localeCompare(b.start) : kb.localeCompare(ka);
-  });
-}
-
-function renderToday() {
-  const isToday = keyOf(sel) === keyOf(new Date());
-  $("tTitle").textContent = isToday ? "Bugungi fokus" : "Kun rejasi";
-  $("tDate").textContent = WEEKDAYS[sel.getDay()] + ", " + dayLabel(sel) + ", " + sel.getFullYear();
-
-  const list = forDay(sel);
-  const stats = [
-    ["Yuqori muhimlik", list.filter((t) => t.prio === "high").length, "trend", "var(--red)"],
-    ["Jami vazifalar", list.length, "clock", "var(--cyan)"],
-    ["Yuqori energiya", list.filter((t) => t.energy === "high").length, "bolt", "var(--purple)"],
-  ];
-  const box = $("stats");
-  box.innerHTML = "";
-  stats.forEach(([label, n, ic, c]) => {
-    const card = el("div", "stat");
-    card.style.setProperty("--c", c);
-    const top = el("div", "top");
-    const i = el("span", "ic");
-    i.append(icon(ic));
-    top.append(i, label);
-    card.append(top, el("b", "", String(n)));
-    box.append(card);
-  });
-
-  const query = $("q").value.trim().toLowerCase();
-  $("stats").hidden = !!query;
-  $("listTitle").textContent = query ? "Qidiruv natijalari" : "Sizning vazifalaringiz";
-  const shown = query ? searchTasks(query) : list;
-  const ul = $("list");
-  ul.innerHTML = "";
-  if (!shown.length) ul.append(el("div", "empty", query ? "Hech narsa topilmadi." : "Bu kunga vazifa yo'q. «Vazifa qo'shish» tugmasini bosing."));
-  shown.forEach((t) => {
-    const row = el("div", "task" + (t.done ? " done" : ""));
-    const cb = el("button", "box");
-    cb.type = "button";
-    cb.setAttribute("aria-label", t.done ? "Bajarilmagan deb belgilash" : "Bajarildi deb belgilash");
-    if (t.done) cb.append(icon("check"));
-    cb.onclick = (e) => { e.stopPropagation(); toggleDone(t); };
-    const body = el("div", "tbody");
-    const tags = tagsFor(t, true);
-    tags.append(timeTag(t));
-    if (query) {
-      const dd = parse(t.occ || t.date);
-      tags.append(tag(dayLabel(dd) + " " + dd.getFullYear(), null, "time"));
-    }
-    body.append(el("p", "ttl", t.title), tags);
-    const del = el("button", "del", "×");
-    del.type = "button";
-    del.setAttribute("aria-label", "O'chirish");
-    del.onclick = (e) => {
-      e.stopPropagation();
-      if (t.src) {
-        const s = t.src;
-        if (confirm("Faqat shu kundagi vazifani o'chirasizmi?\n(Bekor qilsangiz, butun takrorlanuvchi vazifani o'chirish taklif qilinadi.)")) {
-          s.skip = [...(s.skip || []), t.occ];
-          saveTask(s);
-          render();
-        } else if (confirm("Butun takrorlanuvchi vazifani barcha kunlardan o'chirasizmi?")) {
-          tasks = tasks.filter((x) => x.id !== s.id);
-          removeTask(s.id);
-          render();
-        }
-      } else if (confirm("Bu vazifani o'chirasizmi?")) {
-        tasks = tasks.filter((x) => x.id !== t.id);
-        removeTask(t.id);
-        render();
-      }
-    };
-    row.onclick = () => openForm(t);
-    row.append(cb, body, del);
-    ul.append(row);
-  });
-}
-
-function renderCal() {
-  const start = addDays(weekRef, -((weekRef.getDay() + 6) % 7));
-  const end = addDays(start, 6);
-  $("range").textContent = start.getMonth() === end.getMonth()
-    ? start.getDate() + " - " + dayLabel(end) + ", " + end.getFullYear()
-    : dayLabel(start) + " - " + dayLabel(end) + ", " + end.getFullYear();
-
-  const wk = $("week");
-  wk.innerHTML = "";
-  for (let i = 0; i < 7; i++) {
-    const d = addDays(start, i);
-    const col = el("div", "col" + (keyOf(d) === keyOf(new Date()) ? " today" : ""));
-    const dh = el("button", "dh");
-    dh.type = "button";
-    dh.append(el("small", "", SHORT[d.getDay()]), el("b", "", String(d.getDate())));
-    dh.onclick = () => { sel = d; setView("today"); };
-    const items = el("div", "items");
-    const list = forDay(d);
-    if (!list.length) items.append(el("p", "none", "Reja yo'q"));
-    list.forEach((t) => {
-      const m = el("div", "mini" + (t.done ? " done" : ""));
-      const p = el("p");
-      const dot = el("span", "dot");
-      dot.style.setProperty("--c", PRIO[t.prio][1]);
-      p.append(dot, t.title);
-      m.append(p, el("p", "t", t.start + " - " + t.end), tagsFor(t, false));
-      m.onclick = () => openForm(t);
-      items.append(m);
-    });
-    col.append(dh, items);
-    wk.append(col);
-  }
-}
-
-function barRows(box, defs, field, items) {
-  box.innerHTML = "";
-  Object.entries(defs).forEach(([key, [label, color]]) => {
-    const group = items.filter((t) => t[field] === key);
-    const done = group.filter((t) => t.done).length;
-    const row = el("div", "brow");
-    row.style.setProperty("--c", color);
-    const track = el("div", "btk");
-    const fill = el("i");
-    fill.style.width = group.length ? Math.round((done * 100) / group.length) + "%" : "0%";
-    track.append(fill);
-    row.append(el("span", "", label), track, el("span", "", done + "/" + group.length));
-    box.append(row);
-  });
-}
-
-function renderStats() {
-  const start = addDays(statRef, -((statRef.getDay() + 6) % 7));
-  const end = addDays(start, 6);
-  $("sRange").textContent = start.getMonth() === end.getMonth()
-    ? start.getDate() + " - " + dayLabel(end) + ", " + end.getFullYear()
-    : dayLabel(start) + " - " + dayLabel(end) + ", " + end.getFullYear();
-
-  const days = [];
-  for (let i = 0; i < 7; i++) { const d = addDays(start, i); days.push({ d, list: forDay(d) }); }
-  const all = days.flatMap((x) => x.list);
-  const done = all.filter((t) => t.done).length;
-  const pct = all.length ? Math.round((done * 100) / all.length) : 0;
-
-  const cards = $("sCards");
-  cards.innerHTML = "";
-  [
-    ["Jami vazifalar", String(all.length), "clock", "var(--cyan)"],
-    ["Bajarilgan", String(done), "check", "var(--green)"],
-    ["Natija", pct + "%", "trend", "var(--purple)"],
-  ].forEach(([label, val, ic, c]) => {
-    const card = el("div", "stat");
-    card.style.setProperty("--c", c);
-    const top = el("div", "top");
-    const i = el("span", "ic");
-    i.append(icon(ic));
-    top.append(i, label);
-    card.append(top, el("b", "", val));
-    cards.append(card);
-  });
-
-  const chart = $("sChart");
-  chart.innerHTML = "";
-  const max = Math.max(1, ...days.map((x) => x.list.length));
-  days.forEach(({ d, list }) => {
-    const dn = list.filter((t) => t.done).length;
-    const col = el("button", "bcol" + (keyOf(d) === keyOf(new Date()) ? " today" : ""));
-    col.type = "button";
-    col.setAttribute("aria-label", dayLabel(d) + ": " + dn + "/" + list.length);
-    const track = el("div", "btrack");
-    const bar = el("div", "bar");
-    bar.style.height = list.length ? Math.max(6, (list.length / max) * 100) + "%" : "4px";
-    const fill = el("i");
-    fill.style.height = list.length ? Math.round((dn * 100) / list.length) + "%" : "0%";
-    bar.append(fill);
-    track.append(bar);
-    col.append(track, el("span", "cnt", dn + "/" + list.length), el("b", "", String(d.getDate())), el("small", "", SHORT[d.getDay()]));
-    col.onclick = () => { sel = d; setView("today"); };
-    chart.append(col);
-  });
-
-  barRows($("sCat"), CAT, "cat", all);
-  barRows($("sPrio"), PRIO, "prio", all);
-}
-
-function render() {
-  const inn = !!user;
-  $("vLogin").hidden = !(authReady && !inn);
-  document.querySelector(".tabs").hidden = !inn;
-  $("logout").hidden = !inn;
-  $("bell").hidden = !inn || !("Notification" in window);
-  $("vToday").hidden = !inn || view !== "today";
-  $("vCal").hidden = !inn || view !== "cal";
-  $("vStats").hidden = !inn || view !== "stats";
-  document.querySelectorAll(".tab").forEach((b) => {
-    if (b.dataset.view === view) b.setAttribute("aria-current", "page"); else b.removeAttribute("aria-current");
-  });
-  if (!inn) return;
-  if (view === "today") renderToday(); else if (view === "cal") renderCal(); else renderStats();
-}
-function setView(v) { view = v; render(); window.scrollTo(0, 0); }
-
-const dlg = $("dlg");
-function openForm(occ) {
-  const t = occ ? (occ.src || occ) : null;
-  editId = t ? t.id : null;
-  $("dlgTitle").textContent = t ? "Vazifani tahrirlash" : "Yangi vazifa";
-  $("fTitle").value = t ? t.title : "";
-  $("fDate").value = t ? t.date : keyOf(view === "today" ? sel : new Date());
-  $("fStart").value = t ? t.start : "09:00";
-  $("fEnd").value = t ? t.end : "10:00";
-  $("fPrio").value = t ? t.prio : "medium";
-  $("fCat").value = t ? t.cat : "work";
-  $("fEnergy").value = t ? t.energy : "medium";
-  $("fRepeat").value = t && isRep(t) ? t.repeat : "none";
-  $("fUntil").value = t && t.until ? t.until : "";
-  $("fErr").hidden = true;
-  syncRepeat();
-  dlg.showModal();
-  $("fTitle").focus();
-}
-function syncRepeat() { $("lUntil").hidden = $("fRepeat").value === "none"; }
-$("fRepeat").onchange = syncRepeat;
-$("addBtn").onclick = () => openForm(null);
-$("fCancel").onclick = () => dlg.close();
-dlg.addEventListener("click", (e) => { if (e.target === dlg) dlg.close(); });
-
-$("form").onsubmit = (e) => {
-  e.preventDefault();
-  const title = $("fTitle").value.trim();
-  if (!title) return;
-  if ($("fEnd").value <= $("fStart").value) {
-    $("fErr").textContent = "Tugash vaqti boshlanish vaqtidan keyin bo'lishi kerak.";
-    $("fErr").hidden = false;
-    return;
-  }
-  const rep = $("fRepeat").value;
-  if (rep !== "none" && $("fUntil").value && $("fUntil").value < $("fDate").value) {
-    $("fErr").textContent = "Tugash sanasi boshlanish sanasidan oldin bo'lmasligi kerak.";
-    $("fErr").hidden = false;
-    return;
-  }
-  const data = {
-    repeat: rep, until: rep === "none" ? "" : $("fUntil").value,
-    title, date: $("fDate").value, start: $("fStart").value, end: $("fEnd").value,
-    prio: $("fPrio").value, cat: $("fCat").value, energy: $("fEnergy").value,
-  };
-  let t = editId ? tasks.find((x) => x.id === editId) : null;
-  if (t) Object.assign(t, data);
-  else { t = { id: newId(), done: false, ...data }; tasks.push(t); }
-  saveTask(t);
-  dlg.close();
-  sel = parse(data.date);
-  weekRef = sel;
-  render();
-};
-
-document.querySelectorAll(".tab").forEach((b) => (b.onclick = () => setView(b.dataset.view)));
-$("q").oninput = () => render();
-$("goToday").onclick = () => { weekRef = midnight(new Date()); render(); };
-$("sToday").onclick = () => { statRef = midnight(new Date()); render(); };
-$("sprev").onclick = () => { statRef = addDays(statRef, -7); render(); };
-$("snext").onclick = () => { statRef = addDays(statRef, 7); render(); };
-$("cprev").onclick = () => { weekRef = addDays(weekRef, -7); render(); };
-$("cnext").onclick = () => { weekRef = addDays(weekRef, 7); render(); };
-
-document.querySelectorAll("[data-i]").forEach((n) => { n.innerHTML = ICONS[n.dataset.i] + n.innerHTML; });
-
-// ===== Eslatmalar =====
-const LEAD = 10; // vazifadan necha daqiqa oldin eslatish
-let fired = {};
-try { fired = JSON.parse(localStorage.getItem("planner.fired") || "{}"); } catch (e) {}
-function markFired(k) {
-  fired[k] = Date.now();
-  const cut = Date.now() - 2 * 86400000;
-  Object.keys(fired).forEach((x) => { if (fired[x] < cut) delete fired[x]; });
-  try { localStorage.setItem("planner.fired", JSON.stringify(fired)); } catch (e) {}
-}
-const notifOk = () => "Notification" in window && Notification.permission === "granted";
-function updateBell() {
-  const b = $("bell");
-  b.classList.toggle("off", !notifOk());
-  b.title = notifOk() ? "Eslatmalar yoqilgan" : "Eslatmalarni yoqish";
-}
-async function notify(title, body, tag) {
-  try {
-    const reg = navigator.serviceWorker && (await navigator.serviceWorker.getRegistration());
-    if (reg) { await reg.showNotification(title, { body, tag, icon: "icon-192.png", badge: "icon-192.png" }); return; }
-  } catch (e) {}
-  try { new Notification(title, { body, tag, icon: "icon-192.png" }); } catch (e) {}
-}
-function checkReminders() {
-  if (!user || !notifOk()) return;
-  const now = new Date();
-  const today = keyOf(now);
-  const mins = now.getHours() * 60 + now.getMinutes();
-  forDay(now).forEach((t) => {
-    if (t.done || !t.start) return;
-    const [h, m] = t.start.split(":").map(Number);
-    const st = h * 60 + m;
-    const kPre = t.id + ":" + today + ":pre";
-    const kNow = t.id + ":" + today + ":now";
-    if (mins >= st && mins < st + 5 && !fired[kNow]) {
-      markFired(kNow); markFired(kPre);
-      notify("Vazifa vaqti keldi", t.title + " (" + t.start + " - " + t.end + ")", kNow);
-    } else if (mins >= st - LEAD && mins < st && !fired[kPre]) {
-      markFired(kPre);
-      notify(LEAD + " daqiqadan keyin", t.title + " (" + t.start + ")", kPre);
-    }
-  });
-}
-$("bell").onclick = async () => {
-  if (!("Notification" in window)) return;
-  if (Notification.permission === "denied") {
-    toast("Bildirishnoma bloklangan. Brauzer yoki telefon sozlamalaridan ruxsat bering.");
-    return;
-  }
-  if (!notifOk()) {
-    const p = await Notification.requestPermission();
-    updateBell();
-    if (p === "granted") notify("Eslatmalar yoqildi", "Vazifadan " + LEAD + " daqiqa oldin va boshlanganda xabar olasiz.", "welcome");
-    return;
-  }
-  toast("Eslatmalar yoqilgan.");
-};
-setInterval(checkReminders, 20000);
-document.addEventListener("visibilitychange", () => { if (!document.hidden) checkReminders(); });
-updateBell();
-
-const root = document.documentElement;
-let theme = "dark";
-try { theme = localStorage.getItem("planner.theme") || "dark"; } catch (e) {}
-function applyTheme() {
-  root.dataset.theme = theme;
-  $("theme").innerHTML = ICONS[theme === "dark" ? "sun" : "moon"];
-}
-$("theme").onclick = () => {
-  theme = theme === "dark" ? "light" : "dark";
-  try { localStorage.setItem("planner.theme", theme); } catch (e) {}
-  applyTheme();
-};
-applyTheme();
-render();
+function searchTasks(q) {}

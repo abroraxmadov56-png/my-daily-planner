@@ -140,12 +140,7 @@
       </div>
     </form>
   </dialog>
-  <div id="toast" class="toast" hidden></div>
-  <script type="module" src="script.js?v=9"></script>
-  <script>
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
-    }
-  </script>
+   <div id="toast" class="toast" hidden></div>
+  <script type="module" src="./script.js"></script>
 </body>
 </html>
